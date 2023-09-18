@@ -7,8 +7,8 @@ import {FixedPointMathLib} from "solmate/utils/FixedPointMathLib.sol";
 import {IOracle} from "../interfaces/IOracle.sol";
 
 // problematic imports
-import {IUniswapV3Pool} from "v3-core/contracts/interfaces/IUniswapV3Pool.sol";
-import {TickMath} from "v3-core/contracts/libraries/TickMath.sol";
+import {IUniswapV3Pool} from "v3-core/interfaces/IUniswapV3Pool.sol";
+import {TickMath} from "v3-core/libraries/TickMath.sol";
 
 /// @title Oracle using Uniswap TWAP oracle as data source
 /// @author zefram.eth & lookeey
@@ -133,7 +133,7 @@ contract UniswapV3Oracle is IOracle, Owned {
             secondsAgo[1] = _twapAgo;
 
             (int56[] memory tickCumulatives,) = uniswapPool.observe(secondsAgo);
-            int24 tick = int24((tickCumulatives[1] - tickCumulatives[0]) / _twapDuration);
+            int24 tick = int24((tickCumulatives[1] - tickCumulatives[0]) / int56(int32(_twapDuration)));
 
             uint160 sqrtPriceX96 = TickMath.getSqrtRatioAtTick(tick);
 
@@ -166,7 +166,7 @@ contract UniswapV3Oracle is IOracle, Owned {
     /// would be (block.timestamp - secs - ago, block.timestamp - ago].
     /// @param minPrice_ The minimum value returned by getPrice(). Maintains a floor for the
     /// price to mitigate potential attacks on the TWAP oracle.
-    function setParams(uint16 multiplier_, uint56 secs_, uint56 ago_, uint128 minPrice_, bool isToken0_)
+    function setParams(uint16 multiplier_, uint32 secs_, uint32 ago_, uint128 minPrice_, bool isToken0_)
         external
         onlyOwner
     {
