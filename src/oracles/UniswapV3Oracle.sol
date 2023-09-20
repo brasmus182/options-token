@@ -5,10 +5,11 @@ import {Owned} from "solmate/auth/Owned.sol";
 import {FixedPointMathLib} from "solmate/utils/FixedPointMathLib.sol";
 
 import {IOracle} from "../interfaces/IOracle.sol";
+import "forge-std/console.sol";
 
-// problematic imports
-import {IUniswapV3Pool} from "v3-core/interfaces/IUniswapV3Pool.sol";
+import {IUniswapTwapOracle} from "../interfaces/IUniswapTwapOracle.sol";
 import {TickMath} from "v3-core/libraries/TickMath.sol";
+import {FullMath} from "v3-core/libraries/FullMath.sol";
 
 /// @title Oracle using Uniswap TWAP oracle as data source
 /// @author zefram.eth & lookeey
@@ -49,7 +50,7 @@ contract UniswapV3Oracle is IOracle, Owned {
     /// -----------------------------------------------------------------------
 
     /// @notice The UniswapV3 TWAP oracle contract (usually a pool with oracle support)
-    IUniswapV3Pool public immutable uniswapPool;
+    IUniswapTwapOracle public immutable uniswapPool;
 
     /// -----------------------------------------------------------------------
     /// Storage variables
@@ -79,7 +80,7 @@ contract UniswapV3Oracle is IOracle, Owned {
     /// -----------------------------------------------------------------------
 
     constructor(
-        IUniswapV3Pool uniswapPool_,
+        IUniswapTwapOracle uniswapPool_,
         bool isToken0_,
         address owner_,
         uint16 multiplier_,
@@ -138,11 +139,14 @@ contract UniswapV3Oracle is IOracle, Owned {
             uint160 sqrtPriceX96 = TickMath.getSqrtRatioAtTick(tick);
 
             // convert sqrtPriceX96 to price with 18 decimals
-            price = (uint256(sqrtPriceX96) * uint256(sqrtPriceX96) * 1e18) / (1 << 192);
+            uint256 priceX96 = uint256(sqrtPriceX96) * uint256(sqrtPriceX96);
+            // token decimals is 18
+            uint256 decimals = 1e18;
+            price = FullMath.mulDiv(priceX96, decimals, 1 << 192);
 
-            // uniV3 gives price by default in terms of token1
-            // if isToken0 is true, then we need to invert the price
-            if (isToken0) {
+            // uniV3 gives price by default in terms of token0
+            // if isToken0 is false, then we need to invert the price
+            if (!isToken0) {
                 price = FixedPointMathLib.divWadUp(1e18, price);
             }
         }
@@ -166,6 +170,7 @@ contract UniswapV3Oracle is IOracle, Owned {
     /// would be (block.timestamp - secs - ago, block.timestamp - ago].
     /// @param minPrice_ The minimum value returned by getPrice(). Maintains a floor for the
     /// price to mitigate potential attacks on the TWAP oracle.
+    /// @param isToken0_ Whether the price should be returned in terms of token0.
     function setParams(uint16 multiplier_, uint32 secs_, uint32 ago_, uint128 minPrice_, bool isToken0_)
         external
         onlyOwner
