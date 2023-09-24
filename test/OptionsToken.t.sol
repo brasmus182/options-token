@@ -6,6 +6,7 @@ import "forge-std/Test.sol";
 import {FixedPointMathLib} from "solmate/utils/FixedPointMathLib.sol";
 
 import {OptionsToken} from "../src/OptionsToken.sol";
+import {Exercise} from "../src/exercise/Exercise.sol";
 import {TestERC20Mintable} from "./mocks/TestERC20Mintable.sol";
 import {BalancerOracle} from "../src/oracles/BalancerOracle.sol";
 import {IERC20Mintable} from "../src/interfaces/IERC20Mintable.sol";
@@ -28,6 +29,7 @@ contract OptionsTokenTest is Test {
     address treasury;
 
     OptionsToken optionsToken;
+    Exercise exerciser;
     BalancerOracle oracle;
     MockBalancerTwapOracle balancerTwapOracle;
     TestERC20Mintable paymentToken;
@@ -45,12 +47,13 @@ contract OptionsTokenTest is Test {
             new BalancerOracle(balancerTwapOracle, owner, ORACLE_MULTIPLIER, ORACLE_SECS, ORACLE_AGO, ORACLE_MIN_PRICE);
         paymentToken = new TestERC20Mintable();
         underlyingToken = IERC20Mintable(address(new TestERC20Mintable()));
-        optionsToken =
-        new OptionsToken("TIT Call Option Token", "oTIT", owner, tokenAdmin, paymentToken, underlyingToken, oracle, treasury);
+        optionsToken = new OptionsToken("TIT Call Option Token", "oTIT", owner, tokenAdmin, underlyingToken);
+
+        exerciser = new Exercise(optionsToken, owner, paymentToken, underlyingToken, oracle, treasury);
 
         // set up contracts
         balancerTwapOracle.setTwapValue(ORACLE_INIT_TWAP_VALUE);
-        paymentToken.approve(address(optionsToken), type(uint256).max);
+        paymentToken.approve(address(exerciser), type(uint256).max);
     }
 
     function test_onlyTokenAdminCanMint(uint256 amount, address hacker) public {
@@ -83,7 +86,8 @@ contract OptionsTokenTest is Test {
         paymentToken.mint(address(this), expectedPaymentAmount);
 
         // exercise options tokens
-        uint256 actualPaymentAmount = optionsToken.exercise(amount, expectedPaymentAmount, recipient);
+        optionsToken.approve(address(exerciser), amount);
+        uint256 actualPaymentAmount = exerciser.exercise(amount, expectedPaymentAmount, recipient);
 
         // verify options tokens were transferred
         assertEqDecimal(optionsToken.balanceOf(address(this)), 0, 18, "user still has options tokens");
@@ -113,7 +117,8 @@ contract OptionsTokenTest is Test {
         paymentToken.mint(address(this), expectedPaymentAmount);
 
         // exercise options tokens
-        uint256 actualPaymentAmount = optionsToken.exercise(amount, expectedPaymentAmount, recipient);
+        optionsToken.approve(address(exerciser), amount);
+        uint256 actualPaymentAmount = exerciser.exercise(amount, expectedPaymentAmount, recipient);
 
         // verify options tokens were transferred
         assertEqDecimal(optionsToken.balanceOf(address(this)), 0, 18, "user still has options tokens");
@@ -141,8 +146,9 @@ contract OptionsTokenTest is Test {
         paymentToken.mint(address(this), expectedPaymentAmount);
 
         // exercise options tokens which should fail
-        vm.expectRevert(bytes4(keccak256("OptionsToken__SlippageTooHigh()")));
-        optionsToken.exercise(amount, expectedPaymentAmount - 1, recipient);
+        optionsToken.approve(address(exerciser), amount);
+        vm.expectRevert(bytes4(keccak256("Exercise__SlippageTooHigh()")));
+        exerciser.exercise(amount, expectedPaymentAmount - 1, recipient);
     }
 
     function test_exerciseTwapOracleNotReady(uint256 amount, address recipient) public {
@@ -164,8 +170,9 @@ contract OptionsTokenTest is Test {
         oracle.setParams(ORACLE_MULTIPLIER, ORACLE_SECS, ORACLE_LARGEST_SAFETY_WINDOW, ORACLE_MIN_PRICE);
 
         // exercise options tokens which should fail
+        optionsToken.approve(address(exerciser), amount);
         vm.expectRevert(bytes4(keccak256("BalancerOracle__TWAPOracleNotReady()")));
-        optionsToken.exercise(amount, expectedPaymentAmount, recipient);
+        exerciser.exercise(amount, expectedPaymentAmount, recipient);
     }
 
     function test_exercisePastDeadline(uint256 amount, address recipient, uint256 deadline) public {
@@ -182,7 +189,8 @@ contract OptionsTokenTest is Test {
         paymentToken.mint(address(this), expectedPaymentAmount);
 
         // exercise options tokens
-        vm.expectRevert(bytes4(keccak256("OptionsToken__PastDeadline()")));
-        optionsToken.exercise(amount, expectedPaymentAmount, recipient, deadline);
+        optionsToken.approve(address(exerciser), amount);
+        vm.expectRevert(bytes4(keccak256("Exercise__PastDeadline()")));
+        exerciser.exercise(amount, expectedPaymentAmount, recipient, deadline);
     }
 }
