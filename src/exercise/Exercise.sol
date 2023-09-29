@@ -5,6 +5,7 @@ import {Owned} from "solmate/auth/Owned.sol";
 import {ERC20} from "solmate/tokens/ERC20.sol";
 import {SafeTransferLib} from "solmate/utils/SafeTransferLib.sol";
 import {FixedPointMathLib} from "solmate/utils/FixedPointMathLib.sol";
+import "path_to_balancer_pool_interface/BalancerPoolInterface.sol";
 
 import {IOracle} from "../interfaces/IOracle.sol";
 import {IERC20Mintable} from "../interfaces/IERC20Mintable.sol";
@@ -15,56 +16,34 @@ import {OptionsToken} from "../OptionsToken.sol";
 /// in this case, by purchasing the underlying token at a discount to the market price.
 /// @dev Assumes the underlying token and the payment token both use 18 decimals.
 contract Exercise is Owned {
-    /// -----------------------------------------------------------------------
     /// Library usage
-    /// -----------------------------------------------------------------------
-
     using SafeTransferLib for ERC20;
     using FixedPointMathLib for uint256;
 
-    /// -----------------------------------------------------------------------
     /// Errors
-    /// -----------------------------------------------------------------------
-
     error Exercise__PastDeadline();
     error Exercise__NotTokenAdmin();
     error Exercise__SlippageTooHigh();
 
-    /// -----------------------------------------------------------------------
     /// Events
-    /// -----------------------------------------------------------------------
-
     event Exercised(address indexed sender, address indexed recipient, uint256 amount, uint256 paymentAmount);
     event SetOracle(IOracle indexed newOracle);
     event SetTreasury(address indexed newTreasury);
 
-    /// -----------------------------------------------------------------------
     /// Immutable parameters
-    /// -----------------------------------------------------------------------
-
-    /// @notice The token paid by the options token holder during redemption
     ERC20 public immutable paymentToken;
-
-    /// @notice The underlying token purchased during redemption
     IERC20Mintable public immutable underlyingToken;
-
-    /// @notice The ERC20 token that is being exercised
     OptionsToken public immutable oToken;
 
-    /// -----------------------------------------------------------------------
     /// Storage variables
-    /// -----------------------------------------------------------------------
-
-    /// @notice The oracle contract that provides the current price to purchase
-    /// the underlying token while exercising options (the strike price)
     IOracle public oracle;
-
-    /// @notice The treasury address which receives tokens paid during redemption
     address public treasury;
+    address public balVault;
+    address public otherTokenAddress;
+    address public ethTokenAddress;
 
-    /// -----------------------------------------------------------------------
-    /// Constructor
-    /// -----------------------------------------------------------------------
+    // New state variable for Balancer's PoolId
+    bytes32 public balancerPoolId;
 
     constructor(
         OptionsToken oToken_,
@@ -84,18 +63,7 @@ contract Exercise is Owned {
         emit SetTreasury(treasury_);
     }
 
-    /// -----------------------------------------------------------------------
     /// External functions
-    /// -----------------------------------------------------------------------
-
-    /// @notice Exercises options tokens to purchase the underlying tokens.
-    /// @dev The options tokens are not burnt but sent to address(0) to avoid messing up the
-    /// inflation schedule.
-    /// The oracle may revert if it cannot give a secure result.
-    /// @param amount The amount of options tokens to exercise
-    /// @param maxPaymentAmount The maximum acceptable amount to pay. Used for slippage protection.
-    /// @param recipient The recipient of the purchased underlying tokens
-    /// @return paymentAmount The amount paid to the treasury to purchase the underlying tokens
     function exercise(uint256 amount, uint256 maxPaymentAmount, address recipient)
         external
         virtual
@@ -104,15 +72,6 @@ contract Exercise is Owned {
         return _exercise(amount, maxPaymentAmount, recipient);
     }
 
-    /// @notice Exercises options tokens to purchase the underlying tokens.
-    /// @dev The options tokens are not burnt but sent to address(0) to avoid messing up the
-    /// inflation schedule.
-    /// The oracle may revert if it cannot give a secure result.
-    /// @param amount The amount of options tokens to exercise
-    /// @param maxPaymentAmount The maximum acceptable amount to pay. Used for slippage protection.
-    /// @param recipient The recipient of the purchased underlying tokens
-    /// @param deadline The Unix timestamp (in seconds) after which the call will revert
-    /// @return paymentAmount The amount paid to the treasury to purchase the underlying tokens
     function exercise(uint256 amount, uint256 maxPaymentAmount, address recipient, uint256 deadline)
         external
         virtual
@@ -122,49 +81,90 @@ contract Exercise is Owned {
         return _exercise(amount, maxPaymentAmount, recipient);
     }
 
-    /// -----------------------------------------------------------------------
     /// Owner functions
-    /// -----------------------------------------------------------------------
-
-    /// @notice Sets the oracle contract. Only callable by the owner.
-    /// @param oracle_ The new oracle contract
     function setOracle(IOracle oracle_) external onlyOwner {
         oracle = oracle_;
         emit SetOracle(oracle_);
     }
 
-    /// @notice Sets the treasury address. Only callable by the owner.
-    /// @param treasury_ The new treasury address
     function setTreasury(address treasury_) external onlyOwner {
         treasury = treasury_;
         emit SetTreasury(treasury_);
     }
 
-    /// -----------------------------------------------------------------------
-    /// Internal functions
-    /// -----------------------------------------------------------------------
+    // New function to set Balancer's Pool ID
+    function setBalancerPoolId(bytes32 _poolId) external onlyOwner {
+        balancerPoolId = _poolId;
+    }
 
+    /// The function to Zap into the 80%/20% Token/ETH pool in Balancer
+    function zapIntoBalancerPool(
+        uint256 ethAmount, 
+        uint256 tokenAmount, 
+        uint256 minBPTOut
+    ) external {
+        require(balancerPoolId != bytes32(0), "Balancer Pool ID not set");
+        
+        uint256[] memory amountsIn = new uint256[](2);
+        amountsIn[0] = ethAmount;
+        amountsIn[1] = tokenAmount;
+
+        bytes memory userData = abi.encode(uint8(1), amountsIn, minBPTOut);  // uint8(1) represents JoinKind.EXACT_TOKENS_IN_FOR_BPT_OUT
+
+        IAsset[] memory assets = new IAsset[](2);
+        assets[0] = IAsset(ethTokenAddress); 
+        assets[1] = IAsset(otherTokenAddress);
+
+        BalancerPoolInterface.JoinPoolRequest memory request = BalancerPoolInterface.JoinPoolRequest({
+            assets: assets,
+            maxAmountsIn: amountsIn,
+            userData: userData,
+            fromInternalBalance: false
+        });
+
+        ERC20(ethTokenAddress).safeTransferFrom(msg.sender, address(this), ethAmount);
+        ERC20(otherTokenAddress).safeTransferFrom(msg.sender, address(this), tokenAmount);
+
+        // Ensure enough allowance for both tokens
+        if (ERC20(ethTokenAddress).allowance(address(this), balVault) < ethAmount) {
+            ERC20(ethTokenAddress).approve(balVault, ethAmount);
+        }
+        if (ERC20(otherTokenAddress).allowance(address(this), balVault) < tokenAmount) {
+            ERC20(otherTokenAddress).approve(balVault, tokenAmount);
+        }
+
+        BalancerPoolInterface(balVault).joinPool(balancerPoolId, address(this), msg.sender, request);
+    }
+
+    
     function _exercise(uint256 amount, uint256 maxPaymentAmount, address recipient)
         internal
         virtual
         returns (uint256 paymentAmount)
     {
-        // skip if amount is zero
         if (amount == 0) return 0;
 
-        // transfer options tokens from msg.sender to address(0)
-        // we transfer instead of burn because TokenAdmin cares about totalSupply
-        // which we don't want to change in order to follow the emission schedule
         oToken.transferFrom(msg.sender, address(0), amount);
 
-        // transfer payment tokens from msg.sender to the treasury
         paymentAmount = amount.mulWadUp(oracle.getPrice());
         if (paymentAmount > maxPaymentAmount) revert Exercise__SlippageTooHigh();
-        paymentToken.safeTransferFrom(msg.sender, treasury, paymentAmount);
 
-        // mint underlying tokens to recipient
+        paymentToken.safeTransferFrom(msg.sender, treasury, paymentAmount);
         underlyingToken.mint(recipient, amount);
 
         emit Exercised(msg.sender, recipient, amount, paymentAmount);
     }
+
+    function setBalancerVault(address _balVault) external onlyOwner {
+        balVault = _balVault;
+    }
+
+    function setOtherTokenAddress(address _otherTokenAddress) external onlyOwner {
+        otherTokenAddress = _otherTokenAddress;
+    }
+
+    function setWETHAddress(address _wethAddress) external onlyOwner {
+        ethTokenAddress = _wethAddress;
+    }
+
 }
