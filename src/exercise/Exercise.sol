@@ -5,7 +5,7 @@ import {Owned} from "solmate/auth/Owned.sol";
 import {ERC20} from "solmate/tokens/ERC20.sol";
 import {SafeTransferLib} from "solmate/utils/SafeTransferLib.sol";
 import {FixedPointMathLib} from "solmate/utils/FixedPointMathLib.sol";
-import "path_to_balancer_pool_interface/BalancerPoolInterface.sol";
+import "../interfaces/BalancerPoolInterface.sol";
 
 import {IOracle} from "../interfaces/IOracle.sol";
 import {IERC20Mintable} from "../interfaces/IERC20Mintable.sol";
