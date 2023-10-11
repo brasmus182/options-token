@@ -1,0 +1,1 @@
+balancer-interfaces/=lib/balancer-v2-monorepo/pkg/interfaces/contracts

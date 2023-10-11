@@ -5,7 +5,8 @@ import {Owned} from "solmate/auth/Owned.sol";
 import {ERC20} from "solmate/tokens/ERC20.sol";
 import {SafeTransferLib} from "solmate/utils/SafeTransferLib.sol";
 import {FixedPointMathLib} from "solmate/utils/FixedPointMathLib.sol";
-import "../interfaces/BalancerPoolInterface.sol";
+import {IVault as BalancerPool} from "balancer-interfaces/vault/IVault.sol";
+import {IAsset} from "balancer-interfaces/vault/IAsset.sol";
 
 import {IOracle} from "../interfaces/IOracle.sol";
 import {IERC20Mintable} from "../interfaces/IERC20Mintable.sol";
@@ -111,7 +112,7 @@ contract Exercise is Owned {
         assets[0] = IAsset(ethTokenAddress);
         assets[1] = IAsset(otherTokenAddress);
 
-        BalancerPoolInterface.JoinPoolRequest memory request = BalancerPoolInterface.JoinPoolRequest({
+        BalancerPool.JoinPoolRequest memory request = BalancerPool.JoinPoolRequest({
             assets: assets,
             maxAmountsIn: amountsIn,
             userData: userData,
@@ -129,7 +130,7 @@ contract Exercise is Owned {
             ERC20(otherTokenAddress).approve(balVault, tokenAmount);
         }
 
-        BalancerPoolInterface(balVault).joinPool(balancerPoolId, address(this), msg.sender, request);
+        BalancerPool(balVault).joinPool(balancerPoolId, address(this), msg.sender, request);
     }
 
     function _exercise(uint256 amount, uint256 maxPaymentAmount, address recipient)
