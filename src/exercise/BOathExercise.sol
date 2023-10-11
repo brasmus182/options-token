@@ -98,21 +98,17 @@ contract Exercise is Owned {
     }
 
     /// The function to Zap into the 80%/20% Token/ETH pool in Balancer
-    function zapIntoBalancerPool(
-        uint256 ethAmount, 
-        uint256 tokenAmount, 
-        uint256 minBPTOut
-    ) external {
+    function zapIntoBalancerPool(uint256 ethAmount, uint256 tokenAmount, uint256 minBPTOut) external {
         require(balancerPoolId != bytes32(0), "Balancer Pool ID not set");
-        
+
         uint256[] memory amountsIn = new uint256[](2);
         amountsIn[0] = ethAmount;
         amountsIn[1] = tokenAmount;
 
-        bytes memory userData = abi.encode(uint8(1), amountsIn, minBPTOut);  // uint8(1) represents JoinKind.EXACT_TOKENS_IN_FOR_BPT_OUT
+        bytes memory userData = abi.encode(uint8(1), amountsIn, minBPTOut); // uint8(1) represents JoinKind.EXACT_TOKENS_IN_FOR_BPT_OUT
 
         IAsset[] memory assets = new IAsset[](2);
-        assets[0] = IAsset(ethTokenAddress); 
+        assets[0] = IAsset(ethTokenAddress);
         assets[1] = IAsset(otherTokenAddress);
 
         BalancerPoolInterface.JoinPoolRequest memory request = BalancerPoolInterface.JoinPoolRequest({
@@ -136,7 +132,6 @@ contract Exercise is Owned {
         BalancerPoolInterface(balVault).joinPool(balancerPoolId, address(this), msg.sender, request);
     }
 
-    
     function _exercise(uint256 amount, uint256 maxPaymentAmount, address recipient)
         internal
         virtual
@@ -166,5 +161,4 @@ contract Exercise is Owned {
     function setWETHAddress(address _wethAddress) external onlyOwner {
         ethTokenAddress = _wethAddress;
     }
-
 }
