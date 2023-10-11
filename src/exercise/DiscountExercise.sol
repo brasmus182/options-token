@@ -6,23 +6,27 @@ import {ERC20} from "solmate/tokens/ERC20.sol";
 import {SafeTransferLib} from "solmate/utils/SafeTransferLib.sol";
 import {FixedPointMathLib} from "solmate/utils/FixedPointMathLib.sol";
 
+import {IExercise} from "../interfaces/IExercise.sol";
 import {IOracle} from "../interfaces/IOracle.sol";
 import {IERC20Mintable} from "../interfaces/IERC20Mintable.sol";
 import {OptionsToken} from "../OptionsToken.sol";
+
+struct DiscountExerciseParams {
+    uint256 maxPaymentAmount;
+}
 
 /// @title Options Token Exercise Contract
 /// @notice Contract that allows the holder of options tokens to exercise them,
 /// in this case, by purchasing the underlying token at a discount to the market price.
 /// @dev Assumes the underlying token and the payment token both use 18 decimals.
-contract Exercise is Owned {
+contract DiscountExercise is IExercise, Owned {
     /// Library usage
     using SafeTransferLib for ERC20;
     using FixedPointMathLib for uint256;
 
     /// Errors
-    error Exercise__PastDeadline();
-    error Exercise__NotTokenAdmin();
     error Exercise__SlippageTooHigh();
+    error Exercise__NotOToken();
 
     /// Events
     event Exercised(address indexed sender, address indexed recipient, uint256 amount, uint256 paymentAmount);
@@ -70,37 +74,14 @@ contract Exercise is Owned {
     /// External functions
 
     /// @notice Exercises options tokens to purchase the underlying tokens.
-    /// @dev The options tokens are not burnt but sent to address(0) to avoid messing up the
-    /// inflation schedule.
-    /// The oracle may revert if it cannot give a secure result.
+    /// @dev The oracle may revert if it cannot give a secure result.
+    /// @param from The user that is exercising their options tokens
     /// @param amount The amount of options tokens to exercise
-    /// @param maxPaymentAmount The maximum acceptable amount to pay. Used for slippage protection.
     /// @param recipient The recipient of the purchased underlying tokens
-    /// @return paymentAmount The amount paid to the treasury to purchase the underlying tokens
-    function exercise(uint256 amount, uint256 maxPaymentAmount, address recipient)
-        external
-        virtual
-        returns (uint256 paymentAmount)
-    {
-        return _exercise(amount, maxPaymentAmount, recipient);
-    }
-
-    /// @notice Exercises options tokens to purchase the underlying tokens.
-    /// @dev The options tokens are not burnt but sent to address(0) to avoid messing up the
-    /// inflation schedule.
-    /// The oracle may revert if it cannot give a secure result.
-    /// @param amount The amount of options tokens to exercise
-    /// @param maxPaymentAmount The maximum acceptable amount to pay. Used for slippage protection.
-    /// @param recipient The recipient of the purchased underlying tokens
-    /// @param deadline The Unix timestamp (in seconds) after which the call will revert
-    /// @return paymentAmount The amount paid to the treasury to purchase the underlying tokens
-    function exercise(uint256 amount, uint256 maxPaymentAmount, address recipient, uint256 deadline)
-        external
-        virtual
-        returns (uint256 paymentAmount)
-    {
-        if (block.timestamp > deadline) revert Exercise__PastDeadline();
-        return _exercise(amount, maxPaymentAmount, recipient);
+    /// @param params Extra parameters to be used by the exercise function
+    function exercise(address from, uint256 amount, address recipient, bytes memory params) external virtual {
+        if (msg.sender != address(oToken)) revert Exercise__NotOToken();
+        _exercise(from, amount, recipient, params);
     }
 
     /// Owner functions
@@ -121,27 +102,22 @@ contract Exercise is Owned {
 
     /// Internal functions
 
-    function _exercise(uint256 amount, uint256 maxPaymentAmount, address recipient)
+    function _exercise(address from, uint256 amount, address recipient, bytes memory params)
         internal
         virtual
         returns (uint256 paymentAmount)
     {
-        // skip if amount is zero
-        if (amount == 0) return 0;
+        // decode params
+        DiscountExerciseParams memory _params = abi.decode(params, (DiscountExerciseParams));
 
-        // transfer options tokens from msg.sender to address(0)
-        // we transfer instead of burn because TokenAdmin cares about totalSupply
-        // which we don't want to change in order to follow the emission schedule
-        oToken.transferFrom(msg.sender, address(0), amount);
-
-        // transfer payment tokens from msg.sender to the treasury
+        // transfer payment tokens from user to the treasury
         paymentAmount = amount.mulWadUp(oracle.getPrice());
-        if (paymentAmount > maxPaymentAmount) revert Exercise__SlippageTooHigh();
-        paymentToken.safeTransferFrom(msg.sender, treasury, paymentAmount);
+        if (paymentAmount > _params.maxPaymentAmount) revert Exercise__SlippageTooHigh();
+        paymentToken.safeTransferFrom(from, treasury, paymentAmount);
 
         // mint underlying tokens to recipient
         underlyingToken.mint(recipient, amount);
 
-        emit Exercised(msg.sender, recipient, amount, paymentAmount);
+        emit Exercised(from, recipient, amount, paymentAmount);
     }
 }

@@ -6,6 +6,12 @@ import {ERC20} from "solmate/tokens/ERC20.sol";
 
 import {IOracle} from "./interfaces/IOracle.sol";
 import {IERC20Mintable} from "./interfaces/IERC20Mintable.sol";
+import {IExercise} from "./interfaces/IExercise.sol";
+
+struct Option {
+    address impl;
+    bool isActive;
+}
 
 /// @title Options Token
 /// @notice Options token representing the right to perform an advantageous action,
@@ -16,6 +22,14 @@ contract OptionsToken is ERC20, Owned, IERC20Mintable {
     /// -----------------------------------------------------------------------
 
     error OptionsToken__NotTokenAdmin();
+    error OptionsToken__PastDeadline();
+    error OptionsToken__NotActive();
+
+    /// -----------------------------------------------------------------------
+    /// Events
+    /// -----------------------------------------------------------------------
+
+    event Exercise(address indexed sender, address indexed recipient, uint256 amount, bytes parameters);
 
     /// -----------------------------------------------------------------------
     /// Immutable parameters
@@ -26,6 +40,12 @@ contract OptionsToken is ERC20, Owned, IERC20Mintable {
 
     /// @notice The underlying token purchased during redemption
     IERC20Mintable public immutable underlyingToken;
+
+    /// -----------------------------------------------------------------------
+    /// Storage variables
+    /// -----------------------------------------------------------------------
+
+    Option[] public options;
 
     /// -----------------------------------------------------------------------
     /// Constructor
@@ -65,5 +85,63 @@ contract OptionsToken is ERC20, Owned, IERC20Mintable {
 
         // mint options tokens
         _mint(to, amount);
+    }
+
+    function addOption(address impl, bool isActive) external onlyOwner {
+        options.push(Option({impl: impl, isActive: isActive}));
+    }
+
+    function setOptionActive(uint256 optionId, bool isActive) external onlyOwner {
+        options[optionId].isActive = isActive;
+    }
+
+    /// @notice Exercises options tokens to purchase the underlying tokens.
+    /// @dev The options tokens are not burnt but sent to address(0) to avoid messing up the
+    /// inflation schedule.
+    /// @param amount The amount of options tokens to exercise
+    /// @param recipient The recipient of the purchased underlying tokens
+    /// @param params Extra parameters to be used by the exercise function
+    function exercise(uint256 amount, address recipient, uint256 optionId, bytes calldata params) external virtual {
+        _exercise(amount, recipient, optionId, params);
+    }
+
+    /// @notice Exercises options tokens to purchase the underlying tokens.
+    /// @dev The options tokens are not burnt but sent to address(0) to avoid messing up the
+    /// inflation schedule.
+    /// @param amount The amount of options tokens to exercise
+    /// @param recipient The recipient of the purchased underlying tokens
+    /// @param params Extra parameters to be used by the exercise function
+    /// @param deadline The deadline by which the transaction must be mined
+    function exercise(uint256 amount, address recipient, uint256 optionId, bytes calldata params, uint256 deadline)
+        external
+        virtual
+    {
+        if (block.timestamp > deadline) revert OptionsToken__PastDeadline();
+        return _exercise(amount, recipient, optionId, params);
+    }
+
+    /// -----------------------------------------------------------------------
+    /// Internal functions
+    /// -----------------------------------------------------------------------
+
+    function _exercise(uint256 amount, address recipient, uint256 optionId, bytes calldata params) internal virtual {
+        // skip if amount is zero
+        if (amount == 0) return;
+
+        // get option
+        Option memory option = options[optionId];
+
+        // skip if option is not active
+        if (!option.isActive) revert OptionsToken__NotActive();
+
+        // transfer options tokens from msg.sender to address(0)
+        // we transfer instead of burn because TokenAdmin cares about totalSupply
+        // which we don't want to change in order to follow the emission schedule
+        transfer(address(0), amount);
+
+        // give rewards to recipient
+        IExercise(option.impl).exercise(msg.sender, amount, recipient, params);
+
+        emit Exercise(msg.sender, recipient, amount, params);
     }
 }
