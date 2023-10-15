@@ -198,4 +198,59 @@ contract OptionsTokenTest is Test {
         vm.expectRevert(bytes4(keccak256("OptionsToken__PastDeadline()")));
         optionsToken.exercise(amount, recipient, 0, abi.encode(params), deadline);
     }
+
+    function test_exerciseNotEnoughPaymentTokens(uint256 amount, address recipient) public {
+        amount = bound(amount, 0, MAX_SUPPLY);
+
+        // mint options tokens
+        vm.prank(tokenAdmin);
+        optionsToken.mint(address(this), amount);
+
+        // mint payment tokens
+        uint256 expectedPaymentAmount =
+            amount.mulWadUp(ORACLE_INIT_TWAP_VALUE.mulDivUp(ORACLE_MULTIPLIER, ORACLE_MIN_PRICE_DENOM));
+        paymentToken.mint(address(this), expectedPaymentAmount - 1);
+
+        // exercise options tokens
+        DiscountExerciseParams memory params = DiscountExerciseParams({maxPaymentAmount: expectedPaymentAmount});
+        vm.expectRevert(bytes4(keccak256("OptionsToken__NotEnoughPaymentTokens()")));
+        optionsToken.exercise(amount, recipient, 0, abi.encode(params));
+    }
+
+    function test_exerciseNotEnoughUnderlyingTokens(uint256 amount, address recipient) public {
+        amount = bound(amount, 0, MAX_SUPPLY);
+
+        // mint options tokens
+        vm.prank(tokenAdmin);
+        optionsToken.mint(address(this), amount);
+
+        // mint payment tokens
+        uint256 expectedPaymentAmount =
+            amount.mulWadUp(ORACLE_INIT_TWAP_VALUE.mulDivUp(ORACLE_MULTIPLIER, ORACLE_MIN_PRICE_DENOM));
+        paymentToken.mint(address(this), expectedPaymentAmount);
+
+        // exercise options tokens
+        DiscountExerciseParams memory params = DiscountExerciseParams({maxPaymentAmount: expectedPaymentAmount});
+        vm.expectRevert(bytes4(keccak256("OptionsToken__NotEnoughUnderlyingTokens()")));
+        optionsToken.exercise(amount + 1, recipient, 0, abi.encode(params));
+    }
+
+    function test_exerciseNotEnoughOptionsTokens(uint256 amount, address recipient) public {
+        amount = bound(amount, 0, MAX_SUPPLY);
+
+        // mint options tokens
+        vm.prank(tokenAdmin);
+        optionsToken.mint(address(this), amount - 1);
+
+        // mint payment tokens
+        uint256 expectedPaymentAmount =
+            amount.mulWadUp(ORACLE_INIT_TWAP_VALUE.mulDivUp(ORACLE_MULTIPLIER, ORACLE_MIN_PRICE_DENOM));
+        paymentToken.mint(address(this), expectedPaymentAmount);
+
+        // exercise options tokens
+        DiscountExerciseParams memory params = DiscountExerciseParams({maxPaymentAmount: expectedPaymentAmount});
+        vm.expectRevert(bytes4(keccak256("OptionsToken__NotEnoughOptionsTokens()")));
+        optionsToken.exercise(amount, recipient, 0, abi.encode(params));
+    }
+
 }
