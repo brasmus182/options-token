@@ -12,6 +12,9 @@ import {IOracle} from "../interfaces/IOracle.sol";
 import {IERC20Mintable} from "../interfaces/IERC20Mintable.sol";
 import {OptionsToken} from "../OptionsToken.sol";
 
+struct DiscountExerciseParams {
+    uint256 maxPaymentAmount;
+}
 /// @title Options Token Exercise Contract
 /// @notice Contract that allows the holder of options tokens to exercise them,
 /// in this case, by purchasing the underlying token at a discount to the market price.
@@ -65,21 +68,21 @@ contract Exercise is Owned {
     }
 
     /// External functions
-    function exercise(uint256 amount, uint256 maxPaymentAmount, address recipient)
+    function exercise(address from, uint256 amount, address recipient, bytes memory params)
         external
         virtual
         returns (uint256 paymentAmount)
     {
-        return _exercise(amount, maxPaymentAmount, recipient);
+        return _exercise(from, amount, recipient, params);
     }
 
-    function exercise(uint256 amount, uint256 maxPaymentAmount, address recipient, uint256 deadline)
+    function exercise(address from, uint256 amount, address recipient, bytes memory params, uint256 deadline)
         external
         virtual
         returns (uint256 paymentAmount)
     {
         if (block.timestamp > deadline) revert Exercise__PastDeadline();
-        return _exercise(amount, maxPaymentAmount, recipient);
+        return _exercise(from, amount, recipient, params);
     }
 
     /// Owner functions
@@ -133,22 +136,23 @@ contract Exercise is Owned {
         BalancerPool(balVault).joinPool(balancerPoolId, address(this), msg.sender, request);
     }
 
-    function _exercise(uint256 amount, uint256 maxPaymentAmount, address recipient)
+    function _exercise(address from, uint256 amount, address recipient, bytes memory params)
         internal
         virtual
         returns (uint256 paymentAmount)
     {
         if (amount == 0) return 0;
-
+        DiscountExerciseParams memory _params = abi.decode(params, (DiscountExerciseParams));
         oToken.transferFrom(msg.sender, address(0), amount);
 
         paymentAmount = amount.mulWadUp(oracle.getPrice());
-        if (paymentAmount > maxPaymentAmount) revert Exercise__SlippageTooHigh();
+        if (paymentAmount > _params.maxPaymentAmount) revert Exercise__SlippageTooHigh();
 
-        paymentToken.safeTransferFrom(msg.sender, treasury, paymentAmount);
+        paymentToken.safeTransferFrom(from, treasury, paymentAmount);
+        zapIntoBalancerPool(paymentAmount, amount, 0);
         underlyingToken.mint(recipient, amount);
-
-        emit Exercised(msg.sender, recipient, amount, paymentAmount);
+        
+        emit Exercised(from, recipient, amount, paymentAmount);
     }
 
     function setBalancerVault(address _balVault) external onlyOwner {
