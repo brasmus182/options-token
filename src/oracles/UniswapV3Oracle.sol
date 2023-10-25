@@ -7,7 +7,7 @@ import {FixedPointMathLib} from "solmate/utils/FixedPointMathLib.sol";
 import {IOracle} from "../interfaces/IOracle.sol";
 import "forge-std/console.sol";
 
-import {IUniswapTwapOracle} from "../interfaces/IUniswapTwapOracle.sol";
+import {IUniswapPool} from "../interfaces/IUniswapPool.sol";
 import {TickMath} from "v3-core/libraries/TickMath.sol";
 import {FullMath} from "v3-core/libraries/FullMath.sol";
 
@@ -49,8 +49,8 @@ contract UniswapV3Oracle is IOracle, Owned {
     /// Immutable parameters
     /// -----------------------------------------------------------------------
 
-    /// @notice The UniswapV3 TWAP oracle contract (usually a pool with oracle support)
-    IUniswapTwapOracle public immutable uniswapPool;
+    /// @notice The UniswapV3 Pool contract (provides the oracle)
+    IUniswapPool public immutable uniswapPool;
 
     /// -----------------------------------------------------------------------
     /// Storage variables
@@ -80,8 +80,8 @@ contract UniswapV3Oracle is IOracle, Owned {
     /// -----------------------------------------------------------------------
 
     constructor(
-        IUniswapTwapOracle uniswapPool_,
-        bool isToken0_,
+        IUniswapPool uniswapPool_,
+        address token,
         address owner_,
         uint16 multiplier_,
         uint32 secs_,
@@ -89,7 +89,7 @@ contract UniswapV3Oracle is IOracle, Owned {
         uint128 minPrice_
     ) Owned(owner_) {
         uniswapPool = uniswapPool_;
-        isToken0 = isToken0_;
+        isToken0 = token == uniswapPool_.token0();
         multiplier = multiplier_;
         secs = secs_;
         ago = ago_;
@@ -136,18 +136,23 @@ contract UniswapV3Oracle is IOracle, Owned {
             (int56[] memory tickCumulatives,) = uniswapPool.observe(secondsAgo);
             int24 tick = int24((tickCumulatives[1] - tickCumulatives[0]) / int56(int32(_twapDuration)));
 
-            uint160 sqrtPriceX96 = TickMath.getSqrtRatioAtTick(tick);
-
-            // convert sqrtPriceX96 to price with 18 decimals
-            uint256 priceX96 = uint256(sqrtPriceX96) * uint256(sqrtPriceX96);
             // token decimals is 18
             uint256 decimals = 1e18;
-            price = FullMath.mulDiv(priceX96, decimals, 1 << 192);
 
-            // uniV3 gives price by default in terms of token0
-            // if isToken0 is false, then we need to invert the price
-            if (!isToken0) {
-                price = FixedPointMathLib.divWadUp(1e18, price);
+            // from https://optimistic.etherscan.io/address/0xB210CE856631EeEB767eFa666EC7C1C57738d438#code#F5#L49
+            uint160 sqrtRatioX96 = TickMath.getSqrtRatioAtTick(tick);
+
+            // Calculate quoteAmount with better precision if it doesn't overflow when multiplied by itself
+            if (sqrtRatioX96 <= type(uint128).max) {
+                uint256 ratioX192 = uint256(sqrtRatioX96) * sqrtRatioX96;
+                price = isToken0
+                    ? FullMath.mulDiv(ratioX192, decimals, 1 << 192)
+                    : FullMath.mulDiv(1 << 192, decimals, ratioX192);
+            } else {
+                uint256 ratioX128 = FullMath.mulDiv(sqrtRatioX96, sqrtRatioX96, 1 << 64);
+                price = isToken0
+                    ? FullMath.mulDiv(ratioX128, decimals, 1 << 128)
+                    : FullMath.mulDiv(1 << 128, decimals, ratioX128);
             }
         }
 
