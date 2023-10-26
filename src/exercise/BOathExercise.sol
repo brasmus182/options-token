@@ -16,6 +16,7 @@ struct DiscountExerciseParams {
     uint256 maxPaymentAmount;
 }
 /// @title Options Token Exercise Contract
+/// @author @bigbadbeard, @lookee, @eidolon
 /// @notice Contract that allows the holder of options tokens to exercise them,
 /// in this case, by purchasing the underlying token at a discount to the market price.
 /// @dev Assumes the underlying token and the payment token both use 18 decimals.
