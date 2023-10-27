@@ -7,6 +7,7 @@ import {SafeTransferLib} from "solmate/utils/SafeTransferLib.sol";
 import {FixedPointMathLib} from "solmate/utils/FixedPointMathLib.sol";
 import {IVault as BalancerVault, IAsset} from "../interfaces/IBalancerVault.sol";
 import {VestingWallet} from "../utils/VestingWallet.sol";
+import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 
 import {IOracle} from "../interfaces/IOracle.sol";
 import {OptionsToken} from "../OptionsToken.sol";
@@ -49,6 +50,11 @@ contract Exercise is Owned {
     address public otherTokenAddress;
     address public weth;
     uint256 oracleVarianceThresholdBPS;
+    uint64 lockDuration;
+    address vestingWalletImpl;
+
+    // helper mapping to visualize locks in frontend
+    mapping (address => address[]) public userLocks;
 
     // New state variable for Balancer's PoolId
     bytes32 public balancerPoolId;
@@ -60,6 +66,7 @@ contract Exercise is Owned {
         ERC20 underlyingToken_,
         IOracle oracle_,
         address treasury_,
+        uint64 lockDuration_,
         uint256 oracleVarianceThresholdBPS_
     ) Owned(owner_) {
         oToken = oToken_;
@@ -67,9 +74,10 @@ contract Exercise is Owned {
         underlyingToken = underlyingToken_;
         oracle = oracle_;
         treasury = treasury_;
+        lockDuration = lockDuration_;
         oracleVarianceThresholdBPS = oracleVarianceThresholdBPS_;
 
-        // vestingWalletImpl = new VestingWallet();
+        vestingWalletImpl = address(new VestingWallet());
 
         emit SetOracle(oracle_);
         emit SetTreasury(treasury_);
@@ -156,7 +164,12 @@ contract Exercise is Owned {
         ERC20(weth).approve(balVault, ethAmount);
         ERC20(underlyingToken).approve(balVault, tokenAmount);
 
-        BalancerVault(balVault).joinPool(balancerPoolId, address(this), msg.sender, request);
+        address userWallet = Clones.clone(vestingWalletImpl);
+        VestingWallet(payable(userWallet)).initialize(userWallet, lockDuration);
+
+        userLocks[user].push(userWallet);
+
+        BalancerVault(balVault).joinPool(balancerPoolId, address(this), userWallet, request);
     }
 
     function _exercise(address from, uint256 amount, address recipient, bytes memory params)
