@@ -5,16 +5,16 @@ import {Owned} from "solmate/auth/Owned.sol";
 import {ERC20} from "solmate/tokens/ERC20.sol";
 import {SafeTransferLib} from "solmate/utils/SafeTransferLib.sol";
 import {FixedPointMathLib} from "solmate/utils/FixedPointMathLib.sol";
-import {IVault as BalancerPool} from "balancer-interfaces/vault/IVault.sol";
-import {IAsset} from "balancer-interfaces/vault/IAsset.sol";
+import {IVault as BalancerVault, IAsset} from "../interfaces/IBalancerVault.sol";
 
 import {IOracle} from "../interfaces/IOracle.sol";
-import {IERC20Mintable} from "../interfaces/IERC20Mintable.sol";
 import {OptionsToken} from "../OptionsToken.sol";
 
-struct DiscountExerciseParams {
-    uint256 maxPaymentAmount;
+struct BOathExerciseParams {
+    uint256 ethAmount;
+    uint256 minBPTOut;
 }
+
 /// @title Options Token Exercise Contract
 /// @notice Contract that allows the holder of options tokens to exercise them,
 /// in this case, by purchasing the underlying token at a discount to the market price.
@@ -28,6 +28,7 @@ contract Exercise is Owned {
     error Exercise__PastDeadline();
     error Exercise__NotTokenAdmin();
     error Exercise__SlippageTooHigh();
+    error Exercise__OraclePriceVariance();
 
     /// Events
     event Exercised(address indexed sender, address indexed recipient, uint256 amount, uint256 paymentAmount);
@@ -36,7 +37,7 @@ contract Exercise is Owned {
 
     /// Immutable parameters
     ERC20 public immutable paymentToken;
-    IERC20Mintable public immutable underlyingToken;
+    ERC20 public immutable underlyingToken;
     OptionsToken public immutable oToken;
 
     /// Storage variables
@@ -44,7 +45,8 @@ contract Exercise is Owned {
     address public treasury;
     address public balVault;
     address public otherTokenAddress;
-    address public ethTokenAddress;
+    address public weth;
+    uint256 oracleVarianceThresholdBPS;
 
     // New state variable for Balancer's PoolId
     bytes32 public balancerPoolId;
@@ -53,15 +55,19 @@ contract Exercise is Owned {
         OptionsToken oToken_,
         address owner_,
         ERC20 paymentToken_,
-        IERC20Mintable underlyingToken_,
+        ERC20 underlyingToken_,
         IOracle oracle_,
-        address treasury_
+        address treasury_,
+        uint256 oracleVarianceThresholdBPS_
     ) Owned(owner_) {
         oToken = oToken_;
         paymentToken = paymentToken_;
         underlyingToken = underlyingToken_;
         oracle = oracle_;
         treasury = treasury_;
+        oracleVarianceThresholdBPS = oracleVarianceThresholdBPS_;
+
+        // vestingWalletImpl = new VestingWallet();
 
         emit SetOracle(oracle_);
         emit SetTreasury(treasury_);
@@ -97,43 +103,58 @@ contract Exercise is Owned {
     }
 
     // New function to set Balancer's Pool ID
-    function setBalancerPoolId(bytes32 _poolId) external onlyOwner {
+    function setBalancerVaultId(bytes32 _poolId) external onlyOwner {
         balancerPoolId = _poolId;
     }
 
     /// The function to Zap into the 80%/20% Token/ETH pool in Balancer
-    function zapIntoBalancerPool(uint256 ethAmount, uint256 tokenAmount, uint256 minBPTOut) external {
+    function zapIntoBalancerPool(address user, uint256 tokenAmount, uint256 ethAmount, uint256 minBPTOut) internal {
         require(balancerPoolId != bytes32(0), "Balancer Pool ID not set");
 
+        // check if user inputted amount is close enough to oracle price
+        // the oracle price is eth in terms of oath, 1:1 ratio
+        // we must convert the tokens ratio into 80:20
+        uint256 oraclePrice = oracle.getPrice().mulWadUp(80/20);
+        uint256 oracleAmountEstimate = tokenAmount.divWadDown(oraclePrice);
+        uint256 threshold = oracleAmountEstimate * oracleVarianceThresholdBPS / 10000;
+        if (
+            oracleAmountEstimate > ethAmount && oracleAmountEstimate - ethAmount > threshold
+            || oracleAmountEstimate < ethAmount && ethAmount - oracleAmountEstimate > threshold
+        ) revert Exercise__OraclePriceVariance();
+
         uint256[] memory amountsIn = new uint256[](2);
-        amountsIn[0] = ethAmount;
-        amountsIn[1] = tokenAmount;
+        IAsset[] memory assets = new IAsset[](2);
+
+        if (weth > address(underlyingToken)) {
+            amountsIn[0] = tokenAmount;
+            amountsIn[1] = ethAmount;
+
+            assets[0] = IAsset(address(underlyingToken));
+            assets[1] = IAsset(weth);
+        } else {
+            amountsIn[1] = tokenAmount;
+            amountsIn[0] = ethAmount;
+
+            assets[1] = IAsset(address(underlyingToken));
+            assets[0] = IAsset(weth);
+        }
 
         bytes memory userData = abi.encode(uint8(1), amountsIn, minBPTOut); // uint8(1) represents JoinKind.EXACT_TOKENS_IN_FOR_BPT_OUT
 
-        IAsset[] memory assets = new IAsset[](2);
-        assets[0] = IAsset(ethTokenAddress);
-        assets[1] = IAsset(otherTokenAddress);
-
-        BalancerPool.JoinPoolRequest memory request = BalancerPool.JoinPoolRequest({
+        BalancerVault.JoinPoolRequest memory request = BalancerVault.JoinPoolRequest({
             assets: assets,
-            maxAmountsIn: amountsIn,
+            maxAmountsIn: amountsIn, 
             userData: userData,
             fromInternalBalance: false
         });
 
-        ERC20(ethTokenAddress).safeTransferFrom(msg.sender, address(this), ethAmount);
-        ERC20(otherTokenAddress).safeTransferFrom(msg.sender, address(this), tokenAmount);
+        ERC20(weth).safeTransferFrom(user, address(this), ethAmount);
 
         // Ensure enough allowance for both tokens
-        if (ERC20(ethTokenAddress).allowance(address(this), balVault) < ethAmount) {
-            ERC20(ethTokenAddress).approve(balVault, ethAmount);
-        }
-        if (ERC20(otherTokenAddress).allowance(address(this), balVault) < tokenAmount) {
-            ERC20(otherTokenAddress).approve(balVault, tokenAmount);
-        }
+        ERC20(weth).approve(balVault, ethAmount);
+        ERC20(underlyingToken).approve(balVault, tokenAmount);
 
-        BalancerPool(balVault).joinPool(balancerPoolId, address(this), msg.sender, request);
+        BalancerVault(balVault).joinPool(balancerPoolId, address(this), msg.sender, request);
     }
 
     function _exercise(address from, uint256 amount, address recipient, bytes memory params)
@@ -142,15 +163,10 @@ contract Exercise is Owned {
         returns (uint256 paymentAmount)
     {
         if (amount == 0) return 0;
-        DiscountExerciseParams memory _params = abi.decode(params, (DiscountExerciseParams));
+        BOathExerciseParams memory _params = abi.decode(params, (BOathExerciseParams));
         oToken.transferFrom(msg.sender, address(0), amount);
 
-        paymentAmount = amount.mulWadUp(oracle.getPrice());
-        if (paymentAmount > _params.maxPaymentAmount) revert Exercise__SlippageTooHigh();
-
-        paymentToken.safeTransferFrom(from, treasury, paymentAmount);
-        zapIntoBalancerPool(paymentAmount, amount, 0);
-        underlyingToken.mint(recipient, amount);
+        zapIntoBalancerPool(from, amount, _params.ethAmount, _params.minBPTOut);
         
         emit Exercised(from, recipient, amount, paymentAmount);
     }
@@ -164,6 +180,6 @@ contract Exercise is Owned {
     }
 
     function setWETHAddress(address _wethAddress) external onlyOwner {
-        ethTokenAddress = _wethAddress;
+        weth = _wethAddress;
     }
 }
