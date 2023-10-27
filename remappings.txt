@@ -2,3 +2,4 @@ balancer-interfaces/=lib/balancer-v2-monorepo/pkg/interfaces/contracts
 balancer-utils/=lib/balancer-v2-monorepo/pkg/solidity-utils/contracts
 solmate=lib/solmate/src
 @openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/
+@openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/
