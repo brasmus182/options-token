@@ -6,6 +6,7 @@ import {ERC20} from "solmate/tokens/ERC20.sol";
 import {SafeTransferLib} from "solmate/utils/SafeTransferLib.sol";
 import {FixedPointMathLib} from "solmate/utils/FixedPointMathLib.sol";
 import {IVault as BalancerVault, IAsset} from "../interfaces/IBalancerVault.sol";
+import {VestingWallet} from "../utils/VestingWallet.sol";
 
 import {IOracle} from "../interfaces/IOracle.sol";
 import {OptionsToken} from "../OptionsToken.sol";
