@@ -6,7 +6,7 @@ import "forge-std/Test.sol";
 import {FixedPointMathLib} from "solmate/utils/FixedPointMathLib.sol";
 
 import {OptionsToken} from "../src/OptionsToken.sol";
-import {Exercise} from "../src/exercise/BOathExercise.sol";
+import {Exercise, BOathExerciseParams} from "../src/exercise/BOathExercise.sol";
 import {TestERC20Mintable} from "./mocks/TestERC20Mintable.sol";
 import {BalancerOracle} from "../src/oracles/BalancerOracle.sol";
 import {IERC20Mintable} from "../src/interfaces/IERC20Mintable.sol";
@@ -29,7 +29,7 @@ contract OptionsTokenTest is Test {
     address treasury;
 
     OptionsToken optionsToken;
-    DiscountExercise exerciser;
+    Exercise exerciser;
     BalancerOracle oracle;
     MockBalancerTwapOracle balancerTwapOracle;
     TestERC20Mintable paymentToken;
@@ -49,7 +49,7 @@ contract OptionsTokenTest is Test {
         underlyingToken = IERC20Mintable(address(new TestERC20Mintable()));
         optionsToken = new OptionsToken("TIT Call Option Token", "oTIT", owner, tokenAdmin, underlyingToken);
 
-        exerciser = new DiscountExercise(optionsToken, owner, paymentToken, underlyingToken, oracle, treasury);
+        // exerciser = new Exercise(optionsToken, owner, paymentToken, underlyingToken, oracle, treasury);
 
         // add exerciser to the list of options
         vm.startPrank(owner);
@@ -91,7 +91,7 @@ contract OptionsTokenTest is Test {
         paymentToken.mint(address(this), expectedPaymentAmount);
 
         // exercise options tokens
-        DiscountExerciseParams memory params = DiscountExerciseParams({maxPaymentAmount: expectedPaymentAmount});
+        BOathExerciseParams memory params = BOathExerciseParams({paymentTokenAmount: expectedPaymentAmount, minBPTOut: 0});
         optionsToken.exercise(amount, recipient, 0, abi.encode(params));
 
         // verify options tokens were transferred
@@ -122,7 +122,7 @@ contract OptionsTokenTest is Test {
         paymentToken.mint(address(this), expectedPaymentAmount);
 
         // exercise options tokens
-        DiscountExerciseParams memory params = DiscountExerciseParams({maxPaymentAmount: expectedPaymentAmount});
+        BOathExerciseParams memory params = BOathExerciseParams({paymentTokenAmount: expectedPaymentAmount, minBPTOut: 0});
         optionsToken.exercise(amount, recipient, 0, abi.encode(params));
 
         // verify options tokens were transferred
@@ -151,7 +151,7 @@ contract OptionsTokenTest is Test {
         paymentToken.mint(address(this), expectedPaymentAmount);
 
         // exercise options tokens which should fail
-        DiscountExerciseParams memory params = DiscountExerciseParams({maxPaymentAmount: expectedPaymentAmount - 1});
+        BOathExerciseParams memory params = BOathExerciseParams({paymentTokenAmount: expectedPaymentAmount, minBPTOut: 0});
         vm.expectRevert(bytes4(keccak256("Exercise__SlippageTooHigh()")));
         optionsToken.exercise(amount, recipient, 0, abi.encode(params));
     }
@@ -175,7 +175,7 @@ contract OptionsTokenTest is Test {
         oracle.setParams(ORACLE_MULTIPLIER, ORACLE_SECS, ORACLE_LARGEST_SAFETY_WINDOW, ORACLE_MIN_PRICE);
 
         // exercise options tokens which should fail
-        DiscountExerciseParams memory params = DiscountExerciseParams({maxPaymentAmount: expectedPaymentAmount - 1});
+        BOathExerciseParams memory params = BOathExerciseParams({paymentTokenAmount: expectedPaymentAmount, minBPTOut: 0});
         vm.expectRevert(bytes4(keccak256("BalancerOracle__TWAPOracleNotReady()")));
         optionsToken.exercise(amount, recipient, 0, abi.encode(params));
     }
@@ -194,7 +194,7 @@ contract OptionsTokenTest is Test {
         paymentToken.mint(address(this), expectedPaymentAmount);
 
         // exercise options tokens
-        DiscountExerciseParams memory params = DiscountExerciseParams({maxPaymentAmount: expectedPaymentAmount});
+        BOathExerciseParams memory params = BOathExerciseParams({paymentTokenAmount: expectedPaymentAmount, minBPTOut: 0});
         vm.expectRevert(bytes4(keccak256("OptionsToken__PastDeadline()")));
         optionsToken.exercise(amount, recipient, 0, abi.encode(params), deadline);
     }

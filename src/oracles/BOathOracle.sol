@@ -2,7 +2,6 @@
 pragma solidity ^0.8.13;
 
 import {Owned} from "solmate/auth/Owned.sol";
-import {FixedPointMathLib} from "solmate/utils/FixedPointMathLib.sol";
 
 import {IOracle} from "../interfaces/IOracle.sol";
 import {IBalancerTwapOracle} from "../interfaces/IBalancerTwapOracle.sol";
@@ -20,12 +19,6 @@ import {IBalancerTwapOracle} from "../interfaces/IBalancerTwapOracle.sol";
 /// and the OptionsToken contract also expects 18 decimals.
 contract BalancerOracle is IOracle, Owned {
     /// -----------------------------------------------------------------------
-    /// Library usage
-    /// -----------------------------------------------------------------------
-
-    using FixedPointMathLib for uint256;
-
-    /// -----------------------------------------------------------------------
     /// Errors
     /// -----------------------------------------------------------------------
 
@@ -35,15 +28,7 @@ contract BalancerOracle is IOracle, Owned {
     /// Events
     /// -----------------------------------------------------------------------
 
-    event SetParams(uint16 multiplier, uint56 secs, uint56 ago, uint128 minPrice);
-
-    /// -----------------------------------------------------------------------
-    /// Constants
-    /// -----------------------------------------------------------------------
-
-    /// @notice The denominator for converting the multiplier into a decimal number.
-    /// i.e. multiplier uses 4 decimals.
-    uint256 internal constant MULTIPLIER_DENOM = 10000;
+    event SetParams(uint56 secs, uint56 ago, uint128 minPrice);
 
     /// -----------------------------------------------------------------------
     /// Immutable parameters
@@ -55,10 +40,6 @@ contract BalancerOracle is IOracle, Owned {
     /// -----------------------------------------------------------------------
     /// Storage variables
     /// -----------------------------------------------------------------------
-
-    /// @notice The multiplier applied to the TWAP value. Encodes the discount of
-    /// the options token. Uses 4 decimals.
-    uint16 public multiplier;
 
     /// @notice The size of the window to take the TWAP value over in seconds.
     uint56 public secs;
@@ -78,18 +59,16 @@ contract BalancerOracle is IOracle, Owned {
     constructor(
         IBalancerTwapOracle balancerTwapOracle_,
         address owner_,
-        uint16 multiplier_,
         uint56 secs_,
         uint56 ago_,
         uint128 minPrice_
     ) Owned(owner_) {
         balancerTwapOracle = balancerTwapOracle_;
-        multiplier = multiplier_;
         secs = secs_;
         ago = ago_;
         minPrice = minPrice_;
 
-        emit SetParams(multiplier_, secs_, ago_, minPrice_);
+        emit SetParams(secs_, ago_, minPrice_);
     }
 
     /// -----------------------------------------------------------------------
@@ -102,7 +81,6 @@ contract BalancerOracle is IOracle, Owned {
         /// Storage loads
         /// -----------------------------------------------------------------------
 
-        uint256 multiplier_ = multiplier;
         uint256 secs_ = secs;
         uint256 ago_ = ago;
         uint256 minPrice_ = minPrice;
@@ -141,18 +119,15 @@ contract BalancerOracle is IOracle, Owned {
     /// -----------------------------------------------------------------------
 
     /// @notice Updates the oracle parameters. Only callable by the owner.
-    /// @param multiplier_ The multiplier applied to the TWAP value. Encodes the discount of
-    /// the options token. Uses 4 decimals.
     /// @param secs_ The size of the window to take the TWAP value over in seconds.
     /// @param ago_ The number of seconds in the past to take the TWAP from. The window
     /// would be (block.timestamp - secs - ago, block.timestamp - ago].
     /// @param minPrice_ The minimum value returned by getPrice(). Maintains a floor for the
     /// price to mitigate potential attacks on the TWAP oracle.
-    function setParams(uint16 multiplier_, uint56 secs_, uint56 ago_, uint128 minPrice_) external onlyOwner {
-        multiplier = multiplier_;
+    function setParams(uint56 secs_, uint56 ago_, uint128 minPrice_) external onlyOwner {
         secs = secs_;
         ago = ago_;
         minPrice = minPrice_;
-        emit SetParams(multiplier_, secs_, ago_, minPrice_);
+        emit SetParams(secs_, ago_, minPrice_);
     }
 }
