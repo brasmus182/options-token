@@ -117,11 +117,10 @@ contract Exercise is BaseExercise, Owned {
         // we must convert the tokens ratio into the pool's ratio by its weights
         // invert calculation if underlying is token1
         uint256 oracleAmountEstimate;
+        uint256 priceInPoolRatio = oraclePrice * poolWeights[0] / poolWeights[1];
         if (underlyingIsToken0) {
-            uint256 priceInPoolRatio = oraclePrice * poolWeights[0] / poolWeights[1];
             oracleAmountEstimate = tokenAmount.divWadDown(priceInPoolRatio);
         } else {
-            uint256 priceInPoolRatio = oraclePrice * poolWeights[1] / poolWeights[0];
             oracleAmountEstimate = tokenAmount.mulWadDown(priceInPoolRatio);
         }
 
