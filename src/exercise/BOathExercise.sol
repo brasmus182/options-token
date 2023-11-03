@@ -81,7 +81,10 @@ contract Exercise is BaseExercise, Owned {
         oracleVarianceThresholdBPS = oracleVarianceThresholdBPS_;
 
         vestingWalletImpl = address(new VestingWallet());
-        underlyingIsToken0 = address(underlyingToken_) < address(paymentToken_);
+
+        (address[] memory poolTokens,,) = BalancerVault(balVault_).getPoolTokens(balancerPoolId_);
+        underlyingIsToken0 = address(underlyingToken_) == poolTokens[0];
+
         (address _pool, ) = BalancerVault(balVault_).getPool(balancerPoolId_);
         poolWeights = IBalancer2TokensPool(_pool).getNormalizedWeights();
 
