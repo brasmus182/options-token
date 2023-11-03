@@ -19,6 +19,10 @@ struct BOathExerciseParams {
     uint256 minBPTOut;
 }
 
+struct BOathExerciseReturnData {
+    address lockAddress;
+}
+
 /// @title Balancer 2 Token Pool Lock Exercise Contract
 /// @author @bigbadbeard, @lookee, @eidolon
 /// @notice Contract that allows the holder of options tokens to exercise them,
@@ -37,7 +41,7 @@ contract Exercise is BaseExercise, Owned {
     error Exercise__OraclePriceVariance();
 
     /// Events
-    event Exercised(address indexed sender, address indexed recipient, uint256 amount, uint256 paymentAmount);
+    event Exercised(address indexed sender, address indexed recipient, uint256 amount, address lockAddress);
     event LockCreated(address indexed by, address wallet);
     event SetOracle(IOracle indexed newOracle);
 
@@ -90,7 +94,7 @@ contract Exercise is BaseExercise, Owned {
         virtual
         override
         onlyOToken
-        returns (uint256 paymentAmount)
+        returns (bytes memory data)
     {
         return _exercise(from, amount, recipient, params);
     }
@@ -107,7 +111,9 @@ contract Exercise is BaseExercise, Owned {
     }
 
     /// The function to Zap into the 80%/20% Token/ETH pool in Balancer
-    function zapIntoBalancerPool(address user, uint256 tokenAmount, uint256 paymentAmount, uint256 minBPTOut, address to) internal {
+    function zapIntoBalancerPool(address user, uint256 tokenAmount, uint256 paymentAmount, uint256 minBPTOut, address to) internal 
+        returns (address vestingWallet)
+    {
         require(balancerPoolId != bytes32(0), "Balancer Pool ID not set");
 
 
@@ -162,7 +168,7 @@ contract Exercise is BaseExercise, Owned {
         underlyingToken.approve(balVault, paymentAmount);
         underlyingToken.approve(balVault, tokenAmount);
 
-        address vestingWallet = _createVestingWallet(to);
+        vestingWallet = _createVestingWallet(to);
 
         BalancerVault(balVault).joinPool(balancerPoolId, address(this), vestingWallet, request);
         emit LockCreated(user, vestingWallet);
@@ -180,15 +186,20 @@ contract Exercise is BaseExercise, Owned {
     function _exercise(address from, uint256 amount, address recipient, bytes memory params)
         internal
         virtual
-        returns (uint256 paymentAmount)
+        returns (bytes memory data)
     {
-        if (amount == 0) return 0;
+        if (amount == 0) return '';
         BOathExerciseParams memory _params = abi.decode(params, (BOathExerciseParams));
         oToken.transferFrom(msg.sender, address(0), amount);
 
-        zapIntoBalancerPool(from, amount, _params.paymentTokenAmount, _params.minBPTOut, recipient);
+        address vestingWallet = zapIntoBalancerPool(from, amount, _params.paymentTokenAmount, _params.minBPTOut, recipient);
+        data = abi.encode(
+            BOathExerciseReturnData({
+                lockAddress: vestingWallet
+            }) 
+        );
         
-        emit Exercised(from, recipient, amount, paymentAmount);
+        emit Exercised(from, recipient, amount, vestingWallet);
     }
 
     function setBalancerVault(address _balVault) external onlyOwner {

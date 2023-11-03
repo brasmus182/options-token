@@ -6,7 +6,7 @@ import {ERC20} from "solmate/tokens/ERC20.sol";
 import {SafeTransferLib} from "solmate/utils/SafeTransferLib.sol";
 import {FixedPointMathLib} from "solmate/utils/FixedPointMathLib.sol";
 
-import {IExercise} from "../interfaces/IExercise.sol";
+import {BaseExercise} from "../exercise/BaseExercise.sol";
 import {IOracle} from "../interfaces/IOracle.sol";
 import {IERC20Mintable} from "../interfaces/IERC20Mintable.sol";
 import {OptionsToken} from "../OptionsToken.sol";
@@ -15,19 +15,22 @@ struct DiscountExerciseParams {
     uint256 maxPaymentAmount;
 }
 
+struct DiscountExerciseReturnData {
+    uint256 paymentAmount;
+}
+
 /// @title Options Token Exercise Contract
 /// @author @bigbadbeard, @lookee, @eidolon
 /// @notice Contract that allows the holder of options tokens to exercise them,
 /// in this case, by purchasing the underlying token at a discount to the market price.
 /// @dev Assumes the underlying token and the payment token both use 18 decimals.
-contract DiscountExercise is IExercise, Owned {
+contract DiscountExercise is BaseExercise, Owned {
     /// Library usage
     using SafeTransferLib for ERC20;
     using FixedPointMathLib for uint256;
 
     /// Errors
     error Exercise__SlippageTooHigh();
-    error Exercise__NotOToken();
 
     /// Events
     event Exercised(address indexed sender, address indexed recipient, uint256 amount, uint256 paymentAmount);
@@ -41,9 +44,6 @@ contract DiscountExercise is IExercise, Owned {
 
     /// @notice The underlying token purchased during redemption
     IERC20Mintable public immutable underlyingToken;
-
-    /// @notice The ERC20 token that is being exercised
-    OptionsToken public immutable oToken;
 
     /// Storage variables
 
@@ -61,8 +61,7 @@ contract DiscountExercise is IExercise, Owned {
         IERC20Mintable underlyingToken_,
         IOracle oracle_,
         address treasury_
-    ) Owned(owner_) {
-        oToken = oToken_;
+    ) BaseExercise(oToken_) Owned(owner_) {
         paymentToken = paymentToken_;
         underlyingToken = underlyingToken_;
         oracle = oracle_;
@@ -80,9 +79,15 @@ contract DiscountExercise is IExercise, Owned {
     /// @param amount The amount of options tokens to exercise
     /// @param recipient The recipient of the purchased underlying tokens
     /// @param params Extra parameters to be used by the exercise function
-    function exercise(address from, uint256 amount, address recipient, bytes memory params) external virtual {
+    function exercise(address from, uint256 amount, address recipient, bytes memory params)
+        external
+        virtual
+        override
+        onlyOToken
+        returns (bytes memory data)
+    {
         if (msg.sender != address(oToken)) revert Exercise__NotOToken();
-        _exercise(from, amount, recipient, params);
+        return _exercise(from, amount, recipient, params);
     }
 
     /// Owner functions
@@ -106,18 +111,24 @@ contract DiscountExercise is IExercise, Owned {
     function _exercise(address from, uint256 amount, address recipient, bytes memory params)
         internal
         virtual
-        returns (uint256 paymentAmount)
+        returns (bytes memory data)
     {
         // decode params
         DiscountExerciseParams memory _params = abi.decode(params, (DiscountExerciseParams));
 
         // transfer payment tokens from user to the treasury
-        paymentAmount = amount.mulWadUp(oracle.getPrice());
+        uint256 paymentAmount = amount.mulWadUp(oracle.getPrice());
         if (paymentAmount > _params.maxPaymentAmount) revert Exercise__SlippageTooHigh();
         paymentToken.safeTransferFrom(from, treasury, paymentAmount);
 
         // mint underlying tokens to recipient
         underlyingToken.mint(recipient, amount);
+
+        data = abi.encode(
+            DiscountExerciseReturnData({
+                paymentAmount: paymentAmount
+            })
+        );
 
         emit Exercised(from, recipient, amount, paymentAmount);
     }

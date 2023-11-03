@@ -14,7 +14,7 @@ abstract contract BaseExercise {
     }
 
     modifier onlyOToken() {
-        if (msg.sender == address(oToken)) revert Exercise__NotOToken();
+        if (msg.sender != address(oToken)) revert Exercise__NotOToken();
         _;
     }
 
@@ -27,5 +27,5 @@ abstract contract BaseExercise {
     function exercise(address from, uint256 amount, address recipient, bytes memory params)
         external
         virtual
-        returns (uint256 paymentAmount);
+        returns (bytes memory);
 }
